@@ -36,7 +36,7 @@ import org.xml.sax.SAXException;
 //import osm2wkt.Osm2Wkt.Landmark;
 import osm2wkt.exports.*;
 
-public class Osm2Wkt implements Runnable{
+public class Osm2Wkt {
 
 	private final static String XML_TAG_OSM 	= "osm";
 	private final static String XML_TAG_NODE 	= "node";
@@ -82,10 +82,62 @@ public class Osm2Wkt implements Runnable{
 			return (this.id == ol.id );
 		}
 	}
+	
+private int nrofThreads = 2;	
+	private class MultiThreadedParsing implements Runnable{
+		private NodeList landmarkings;
+		MultiThreadedParsing(NodeList landmarks) {
+			this.landmarkings = landmarks;
+		}
+		
+		@Override
+		public void run() {
+			// TODO Auto-generated method stub
+			System.out.println("starting thread : " + Thread.currentThread().getName() );
+			int s=0;
+			int max=0;
+			int len = landmarkings.getLength();
+			if (Thread.currentThread().getName() == "th1") {
+				s=0;
+				max = len/2;
+			}
+			else {
+				s = len/2;
+				max = len;
+			}
+				
+			for( ; s<max; s++ ){
+				if(s%1000 ==0)
+					System.out.println("Landmark no. " + s + "  " + java.util.Calendar.getInstance().getTime() + "by" + Thread.currentThread().getName());
+				Node markNode = landmarkings.item(s);
+				if( markNode.getNodeType() != Node.ELEMENT_NODE ) continue;
+				Element markElement = (Element)markNode;   
+				// http://stackoverflow.com/questions/132564/whats-the-difference-between-an-element-and-a-node-in-xml
+				Attr idAttr = markElement.getAttributeNode(XML_TAG_ID);
+				Attr idLat = markElement.getAttributeNode(XML_TAG_LAT);
+				Attr idLon = markElement.getAttributeNode(XML_TAG_LON);
+				if(idAttr == null || idLat == null || idLon == null){
+					System.out.println("missing attribute in landmark " 
+								+ markNode.getNodeValue());       
+						continue;
+					}
+	
+					Landmark landObj = new Landmark();
+					landObj.id = Long.valueOf(idAttr.getValue());
+					landObj.latitude = Double.valueOf(idLat.getValue());
+					landObj.longitude = Double.valueOf(idLon.getValue());
+	
+					landmarks.put(landObj.id, landObj);
+				}
+			}
+		
+		
+		
+	}
 
 	private ConcurrentHashMap<Long, Vector<Long>> streets = new ConcurrentHashMap<Long,Vector<Long>>();
 	private ConcurrentHashMap<Long,Landmark> landmarks = new ConcurrentHashMap<Long,Landmark>();
-
+	
 	private Long nextLandmarkIndex(){
 		Long i=new Long(landmarks.size());
 		for( ; true; i++){
@@ -101,12 +153,6 @@ public class Osm2Wkt implements Runnable{
 		BigDecimal bd = new BigDecimal(Double.toString(d));
 		bd = bd.setScale(decimalPlace,BigDecimal.ROUND_HALF_UP);
 		return bd.doubleValue();
-	}
-
-	@Override
-	public void run() {
-		// TODO Auto-generated method stub
-		
 	}
 
 	private boolean readOsm(String filename){
@@ -143,34 +189,21 @@ public class Osm2Wkt implements Runnable{
 			System.out.println("Finished loading xml" + java.util.Calendar.getInstance().getTime());
 			// read in all landmarks
 			
-//			List<NodeList> landmarksall = new ArrayList<NodeList>();
 			NodeList landmarkList = doc.getElementsByTagName(XML_TAG_NODE);
-			System.out.println("landmarkListLength = " + landmarkList.getLength());
-			for( int s=0; s<landmarkList.getLength(); s++ ){
-				if(s%9000 ==0)
-					System.out.println("Landmarks " + s + "  " + java.util.Calendar.getInstance().getTime());
-				Node markNode = landmarkList.item(s);
-				if( markNode.getNodeType() != Node.ELEMENT_NODE ) continue;
-				Element markElement = (Element)markNode;   
-				// http://stackoverflow.com/questions/132564/whats-the-difference-between-an-element-and-a-node-in-xml
+			NodeList t1 = doc.getElementsByTagName(XML_TAG_NODE);
+			NodeList t2 = doc.getElementsByTagName(XML_TAG_NODE);
+			
+			int len = landmarkList.getLength();
+			System.out.println("landmarkListLength = " + len);
 
-				Attr idAttr = markElement.getAttributeNode(XML_TAG_ID);
-				Attr idLat = markElement.getAttributeNode(XML_TAG_LAT);
-				Attr idLon = markElement.getAttributeNode(XML_TAG_LON);
+			MultiThreadedParsing mpt1 = new MultiThreadedParsing(t1);
+			MultiThreadedParsing mpt2 = new MultiThreadedParsing(t2);
+			Thread th1 = new Thread(mpt1,"th1");
+			Thread th2 = new Thread(mpt1,"th2");
 
-				if(idAttr == null || idLat == null || idLon == null){
-					System.out.println("missing attribute in landmark " 
-							+ markNode.getNodeValue());       
-					continue;
-				}
-
-				Landmark landObj = new Landmark();
-				landObj.id = Long.valueOf(idAttr.getValue());
-				landObj.latitude = Double.valueOf(idLat.getValue());
-				landObj.longitude = Double.valueOf(idLon.getValue());
-
-				landmarks.put(landObj.id, landObj);
-			}
+			th1.start();
+			th2.start();
+			
 			System.out.println("Finished landmarks" + java.util.Calendar.getInstance().getTime());
 			// read in all streets
 			NodeList wayList = doc.getElementsByTagName(XML_TAG_WAY);
