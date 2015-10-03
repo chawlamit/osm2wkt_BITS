@@ -33,6 +33,8 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 import org.xml.sax.SAXException;
 
+import uk.me.jstott.jcoord.LatLng;
+import uk.me.jstott.jcoord.UTMRef;
 //import osm2wkt.Osm2Wkt.Landmark;
 import osm2wkt.exports.*;
 
@@ -86,8 +88,10 @@ public class Osm2Wkt {
 private int nrofThreads = 2;	
 	private class MultiThreadedParsing implements Runnable{
 		private NodeList landmarkings;
-		MultiThreadedParsing(NodeList landmarks) {
+		private int len;
+		MultiThreadedParsing(NodeList landmarks, int length) {
 			this.landmarkings = landmarks;
+			this.len = length;
 		}
 		
 		@Override
@@ -96,8 +100,8 @@ private int nrofThreads = 2;
 			System.out.println("starting thread : " + Thread.currentThread().getName() );
 			int s=0;
 			int max=0;
-			int len = landmarkings.getLength();
-			if (Thread.currentThread().getName() == "th1") {
+
+			if (Thread.currentThread().getName().equalsIgnoreCase("th1")) {
 				s=0;
 				max = len/2;
 			}
@@ -123,11 +127,16 @@ private int nrofThreads = 2;
 					}
 	
 					Landmark landObj = new Landmark();
+					try {
 					landObj.id = Long.valueOf(idAttr.getValue());
 					landObj.latitude = Double.valueOf(idLat.getValue());
 					landObj.longitude = Double.valueOf(idLon.getValue());
 	
 					landmarks.put(landObj.id, landObj);
+					} catch (Exception e) {
+						System.err.println("Error for " + s + " " + idAttr.getValue()+
+								" " + idLat.getValue() + " " + idLon.getValue());
+					}
 				}
 			}
 		
@@ -196,8 +205,8 @@ private int nrofThreads = 2;
 			int len = landmarkList.getLength();
 			System.out.println("landmarkListLength = " + len);
 
-			MultiThreadedParsing mpt1 = new MultiThreadedParsing(t1);
-			MultiThreadedParsing mpt2 = new MultiThreadedParsing(t2);
+			MultiThreadedParsing mpt1 = new MultiThreadedParsing(t1, len);
+			MultiThreadedParsing mpt2 = new MultiThreadedParsing(t2, len);
 			Thread th1 = new Thread(mpt1,"th1");
 			Thread th2 = new Thread(mpt1,"th2");
 
@@ -396,14 +405,14 @@ private int nrofThreads = 2;
 		System.out.println("do you want to fix missing landmarks? " +
 		"this will take very long but can heavily reduce map partitioning");
 		System.out.print("type 'y' or 'n': ");
-		int r = 0;
+		/* int r = 0;
 		try {
-			r = System.in.read();
+			r = 'n'; // System.in.read();
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
-		if(r != 'y') return true;     // ?? on entering Y why are we returning shouldn't we start comparing
-
+		if(r != 'y') */return true;     // ?? on entering Y why are we returning shouldn't we start comparing
+/*
 		System.out.println("checking for missing landmarks for crossing street parts. this may take a while ...");
 
 		boolean changed = false;  
@@ -535,7 +544,7 @@ private int nrofThreads = 2;
 				+ " missing landmarks. currently have "
 				+ landmarks.size() + " landmarks");
 		return true;
-	}
+	*/}
 
 	private Landmark checkCrossing(Landmark a1, Landmark a2, Landmark b1, Landmark b2){
 		// see http://www.ucancode.net/faq/C-Line-Intersection-2D-drawing.htm
@@ -634,6 +643,18 @@ private int nrofThreads = 2;
 			l.y = geoDistance(l.latitude, l.longitude, latMin, l.longitude);
 		}
 
+		return true;
+	}
+	
+	//TAG - CONVERT TO UTM
+	private boolean transformCoordinates2(){
+		for(Landmark l : landmarks.values()){
+			LatLng wsg84_coord = new LatLng(l.latitude, l.longitude);
+			UTMRef utm_coord = wsg84_coord.toUTMRef();
+			l.x = utm_coord.getEasting();
+			l.y = utm_coord.getNorthing();
+			
+		}
 		return true;
 	}
 
@@ -751,6 +772,7 @@ private int nrofThreads = 2;
 				largestpartition = partition;
 		}
 
+
 		System.out.println("selecting largest partition of landmark size " 
 				+ largestpartition.size()
 				+ ". removing unselected partitions of estimated " 
@@ -761,11 +783,19 @@ private int nrofThreads = 2;
 			System.out.println("not reparing");
 			return true;
 		}
+		
+		ConcurrentHashMap<Long,Landmark> landmarksNew = new ConcurrentHashMap<Long,Landmark>();
+		int countRemovedStreets = 0;
+		int countRemovedLandmarks = landmarks.size() - largestpartition.size();
+		for(Long key : largestpartition)
+			landmarksNew.put(key, landmarks.get(key));
+		
+		landmarks = landmarksNew;
 
 
 		// have we encountered cases in which the graph came out to be unconnected
 		// collect all vertices that are in the other than largest partitions
-		HashSet<Long> verticesRemove = new HashSet<Long>();
+/*		HashSet<Long> verticesRemove = new HashSet<Long>();
 		for(Set<Long> partition : partitions){
 			if(partition.size() == largestpartition.size()) continue;
 			verticesRemove.addAll(partition);
@@ -774,20 +804,33 @@ private int nrofThreads = 2;
 		System.out.println("analyzed " + verticesRemove.size() + " landmarks to remove");
 
 		// remove vertices and edges from unused partitions
-		int countRemovedLandmarks = 0;
-		int countRemovedStreets = 0;
-
+		
+		System.out.println("removing landmarks now");
 		for(Long vertice : verticesRemove){
-
+			System.out.println("vertice to remove : " + vertice);
 			boolean removedL;
 			do{
 				// remove all landmark 
 				removedL = false;
+				try{
+					if (null != landmarks.remove((long)vertice)){
+						removedL = true;
+						countRemovedLandmarks++;
+						if (countRemovedLandmarks % 10000 == 0)
+							System.out.println(countRemovedLandmarks);
+					}
+				} catch (Exception ex) {
+					System.out.println("Vertice not found");
+					// do noting
+				}
+				
 				for(Long lid : landmarks.keySet()){
 					if(((long)lid) == ((long)vertice)){
 						landmarks.remove(lid); 
 						removedL = true;
 						countRemovedLandmarks++;
+						if (countRemovedLandmarks % 1000 == 0)
+							System.out.println(countRemovedLandmarks);
 						break;
 					}
 				}
@@ -807,10 +850,33 @@ private int nrofThreads = 2;
 					}
 				}
 			}while(removedS);
+		}
+		*/		
+			
+		//remove all streets that do not contain these landmarks
+		System.out.println("removing streets now");
+		Set<Long> allStreets = streets.keySet();
+		for (Long sid : allStreets ) {
+			Vector<Long> streetLandMarks = streets.get(sid);
+			int len = streetLandMarks.size();
+			boolean goodStreet = true;
+			for(int i=0; i < len; i++){
+			    if(!landmarks.containsKey(streetLandMarks.get(i))){
+			    	goodStreet = false;
+			    	break;
+			    }
+			}
+			if (goodStreet)
+				continue;
+		
+			streets.remove(sid);
+			countRemovedStreets++;
+			if (countRemovedStreets % 1000 == 0)
+				System.out.println(countRemovedStreets);
+		}
+		
 
-		} //for(Long vertice : verticesRemove)
-
-		System.out.println("removed " + countRemovedStreets 
+	System.out.println("removed " + countRemovedStreets 
 				+ " unconnected streets and " + countRemovedLandmarks 
 				+ " unconnected landmarks. know have "
 				+ streets.size() + " streets in map built upon "
@@ -1113,7 +1179,7 @@ private int nrofThreads = 2;
 			System.out.println("starting : "+java.util.Calendar.getInstance().getTime());
 			if(!obj.readOsm(file)) 						return;
 			System.out.println("read : "+java.util.Calendar.getInstance().getTime());
-			if(!obj.transformCoordinates()) 			return;
+			if(!obj.transformCoordinates2()) 			return;
 			System.out.println("transform : "+java.util.Calendar.getInstance().getTime());
 			// this is where( simplifyGraph ) the graph is constructed 
 			// so you can create a weighted graph here and see if we get weird edges
